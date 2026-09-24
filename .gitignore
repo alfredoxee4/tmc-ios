@@ -99,6 +99,7 @@ _Deparsed_XSubs.pm
 *.sna
 __pycache__
 Info.plist
+!ios/Info.plist
 ctx.c
 !doxygen_config.py
 

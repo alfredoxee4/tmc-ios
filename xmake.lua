@@ -189,9 +189,9 @@ add_requires("guilite")
 if is_plat("mingw", "windows") then
     add_requires("libpng")
     add_requires("zlib")
-elseif is_plat("android") then
-    -- NDK triplet has no system packages; build both from source (small,
-    -- cross-compile cleanly).
+elseif is_plat("android", "iphoneos") then
+    -- NDK triplet has no system packages; the iOS SDK neither. Build both
+    -- from source (small, cross-compile cleanly).
     add_requires("libpng", {system = false})
     add_requires("zlib",   {system = false})
 else
@@ -206,9 +206,9 @@ end
 -- build would drag in a whole TLS stack, so RA is simply compiled out there
 -- instead of failing the target.
 local ra_enabled = has_config("ra")
-if ra_enabled and is_plat("android") then
+if ra_enabled and is_plat("android", "iphoneos") then
     ra_enabled = false
-    print("PC port: RetroAchievements disabled on Android (no libcurl in the NDK).")
+    print("PC port: RetroAchievements disabled on Android/iOS (no libcurl in the NDK / iOS SDK).")
 end
 if ra_enabled then
     add_requires("libcurl")
@@ -527,6 +527,17 @@ target("tmc_pc")
         -- Android 15+ requires 16 KB page-aligned segments (same flag the
         -- SameBoy Android port ships).
         add_shflags("-Wl,-z,max-page-size=16384", {force = true})
+    elseif is_plat("iphoneos") then
+        -- iOS: plain Mach-O binary. ios/package_ipa.sh wraps it in an
+        -- unsigned .app bundle (Payload/TMC.app) and zips the .ipa for
+        -- SideStore/AltStore, which re-sign it with the user's own Apple
+        -- ID at install time.
+        set_kind("binary")
+        set_targetdir("build/ios")
+        -- Touch overlay (floating joystick / d-pad + A/B/R/L/Select/Start
+        -- buttons) — the same code path as Android, wired to SDL finger
+        -- events which SDL3 delivers natively on iOS.
+        add_defines("TMC_TOUCH_UI")
     else
         set_kind("binary")
         set_targetdir("build/pc")
@@ -677,8 +688,10 @@ target("tmc_pc")
     -- presence so checkouts without access still build. Detect by
     -- looking for the launcher's public header (the submodule pointer
     -- exists in .gitmodules but the working tree is empty when the
-    -- clone fails).
-    if os.isfile("libs/tmc-Modern-Launcher/include/tmc_launcher.h") then
+    -- clone fails). Skipped on iOS: the guilite package is unverified for
+    -- the iphoneos toolchain, and the iOS build uses the SDL prelaunch
+    -- screen instead of the desktop launcher.
+    if not is_plat("iphoneos") and os.isfile("libs/tmc-Modern-Launcher/include/tmc_launcher.h") then
         add_defines("launcher", "GUILITE_ON", "TMC_HAS_MODERN_LAUNCHER=1")
         add_includedirs("libs/tmc-Modern-Launcher/include")
         add_includedirs("libs/tmc-Modern-Launcher/3p")
@@ -1026,12 +1039,13 @@ target("tmc_pc")
     --     The mode1 #pragma simply degrades to a serial loop on macOS
     --     when the flag isn't set — render is slower but visually
     --     identical. v0.3.0-experimental release CI hit this; skip the
-    --     flag on macOS so the build succeeds.
+    --     flag on macOS so the build succeeds. Same for iOS: the SDK ships
+    --     no OpenMP runtime at all.
     --   - Windows ARM64 (llvm-mingw): ships libomp (not libgomp); static
     --     linking of it under -static is unverified, so degrade to the
     --     same serial mode1 path as macOS to guarantee the build links.
     --     Re-enable once a CI run confirms libomp links cleanly.
-    local openmp_ok = not is_plat("macosx")
+    local openmp_ok = not is_plat("macosx", "iphoneos") -- Apple Clang (macOS) and the iOS SDK have no OpenMP runtime; skip there
     if is_plat("windows", "mingw") and not is_x86_target() then
         openmp_ok = false
     end

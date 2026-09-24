@@ -21,9 +21,13 @@
 #include "port_tts.h"
 #include "port_runtime_config.h"
 
-#ifdef __ANDROID__
-/* No subprocess TTS backends exist on Android (spd-say/say/SAPI are desktop).
- * Native TTS via android.speech.tts + JNI is a planned later milestone; until
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
+#if defined(__ANDROID__) || (defined(__APPLE__) && defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+/* No subprocess TTS backends exist on Android/iOS (spd-say/say/SAPI are desktop).
+ * Native TTS via platform speech APIs is a planned later milestone; until
  * then the whole a11y-speech surface is a well-behaved no-op so the rest of
  * the port (menus, config plumbing) links and runs unchanged. */
 extern "C" {
@@ -85,7 +89,7 @@ const char* Port_TTS_GetBackendName(void) {
 /* Port_TTS_SpeakTextIndex is implemented in src/message.c (needs Token /
  * GetCharacter) and internally calls Port_TTS_Speak — no stub here. */
 }
-#else /* !__ANDROID__ */
+#else /* !__ANDROID__ && !iOS */
 
 #include <atomic>
 #include <chrono>
@@ -798,4 +802,4 @@ extern "C" void Port_TTS_SetLanguage(const char* v) {
 extern "C" const char* Port_TTS_GetBackendName(void) {
     return BackendName(g_state.backend);
 }
-#endif /* !__ANDROID__ */
+#endif /* !__ANDROID__ && !iOS */

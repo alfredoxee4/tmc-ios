@@ -9,7 +9,9 @@
 #include <cstring>
 #include <vector>
 
-#ifdef __ANDROID__
+/* Touch overlay: Android + iOS. SDL3 delivers SDL_EVENT_FINGER_* natively on
+ * both; TMC_TOUCH_UI is defined by xmake.lua for the iphoneos platform. */
+#if defined(__ANDROID__) || defined(TMC_TOUCH_UI)
 
 /* Engine-side helper (port_linked_stubs.c): 1 while the R button has a
  * specific context action, driving the R face-button glow. */

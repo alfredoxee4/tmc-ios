@@ -328,11 +328,17 @@ static void PaintSplash(SDL_Window* window, const char* msg) {
 #endif
 }
 
-#ifdef __ANDROID__
-/* SDL's Java glue (SDLActivity) loads libmain.so and invokes SDL_main; this
- * include renames main -> SDL_main. Only defined in this TU. */
+#if defined(__ANDROID__) || defined(SDL_PLATFORM_IOS)
+/* SDL_main.h renames main -> SDL_main. SDL3's platform bootstrap (Android's
+ * SDLActivity / iOS's UIKit glue) invokes it. Header-only in SDL3 — no
+ * libSDL3main to link. This include must stay in the TU that defines main. */
 #include <SDL3/SDL_main.h>
+#endif
+#ifdef __ANDROID__
 #include <unistd.h>
+#endif
+#ifdef SDL_PLATFORM_IOS
+#include <unistd.h> /* chdir() for the iOS sandbox data dir below */
 #endif
 
 int main(int argc, char* argv[]) {
@@ -392,6 +398,29 @@ int main(int argc, char* argv[]) {
                 }
                 SDL_free(pref);
             }
+        }
+    }
+#endif
+
+#ifdef SDL_PLATFORM_IOS
+    /* iOS sandbox: SDL starts the app with CWD at the app bundle, which is
+     * read-only. One chdir into the app's Application Support dir makes
+     * every CWD-relative file the port touches (config.json, tmc.sav,
+     * the extracted asset cache, quicksaves, bugreports — and the ROM the
+     * picker installs as baserom.gba) land somewhere writable. Same trick
+     * as the Android block above, minus the shared-storage preference:
+     * iOS has no user-visible shared storage for us to prefer. */
+    if (SDL_Init(0)) {
+        char* pref = SDL_GetPrefPath("picori", "tmc");
+        if (pref) {
+            if (chdir(pref) != 0) {
+                fprintf(stderr, "[ios] chdir(%s) failed\n", pref);
+            } else {
+                fprintf(stderr, "[ios] data dir: %s\n", pref);
+            }
+            SDL_free(pref);
+        } else {
+            fprintf(stderr, "[ios] SDL_GetPrefPath failed: %s\n", SDL_GetError());
         }
     }
 #endif

@@ -1,0 +1,112 @@
+# iOS build: compiles the port for arm64 iphoneos with xmake on a macOS
+# runner, then assembles an UNSIGNED .ipa (Payload/TMC.app) via
+# ios/package_ipa.sh. The .ipa carries NO Nintendo assets: the user's own
+# ROM is imported and hash-validated on first launch, and the asset cache
+# is extracted from that ROM at first boot.
+#
+# Install story: SideStore / AltStore re-sign the unsigned .ipa with the
+# installer's own Apple ID, so no signing certificate is needed here.
+#
+# This workflow is deliberately NOT verified yet — first green run is the
+# real compile check for the iphoneos target added to xmake.lua.
+name: iOS Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['master']
+    paths:
+      - 'ios/**'
+      - 'port/**'
+      - '.github/workflows/ios.yaml'
+      - 'xmake.lua'
+      - 'build.py'
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    runs-on: macos-14
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: false
+          clean: false
+          persist-credentials: false
+
+      - name: Checkout submodules
+        shell: bash
+        env:
+          SUBMODULES_TOKEN: ${{ secrets.PRIVATE_SUBMODULES_TOKEN }}
+        run: |
+          if [ -n "$SUBMODULES_TOKEN" ]; then
+            url_cfg="url.https://x-access-token:${SUBMODULES_TOKEN}@github.com/.insteadOf"
+            git -c "$url_cfg=https://github.com/" -c "$url_cfg=https://github.com" \
+                -c "$url_cfg=git@github.com:" -c "$url_cfg=ssh://git@github.com/" \
+                submodule sync --recursive
+            git -c "$url_cfg=https://github.com/" -c "$url_cfg=https://github.com" \
+                -c "$url_cfg=git@github.com:" -c "$url_cfg=ssh://git@github.com/" \
+                submodule update --init --recursive --depth 1 || true
+          else
+            git submodule sync --recursive || true
+            git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | \
+              awk '{print $2}' | while read -r p; do
+                echo "::group::submodule $p"
+                git submodule update --init --recursive --depth 1 -- "$p" || \
+                  echo "::warning::failed to fetch submodule $p — continuing"
+                echo "::endgroup::"
+              done
+          fi
+          if [ ! -d libs/VirtuaAPU/src ]; then
+            echo "::error::libs/VirtuaAPU is empty after submodule init — build cannot proceed."
+            exit 1
+          fi
+
+      - name: Setup xmake
+        uses: xmake-io/github-action-setup-xmake@3a1a5dddfc7fa625d9a698738334bf55655a861a # v1
+        with:
+          # Pinned for the same reason as _build.yaml: xmake `latest`
+          # (v3.0.9) intermittently aborts during codegen; v3.0.8 builds
+          # this tree cleanly.
+          xmake-version: v3.0.8
+          actions-cache-folder: '.xmake-cache'
+          actions-cache-key: ios-arm64
+          package-cache: true
+          package-cache-key: ios-arm64
+
+      - name: Build tmc_pc for iphoneos (arm64)
+        shell: bash
+        run: |
+          xmake f -y -p iphoneos -a arm64
+          # xmake 3.0.8 can segfault on exit AFTER a successful build on this
+          # target ("[100%]: build ok" then SIGSEGV). Retry once; the step
+          # passes as long as a valid arm64 binary was produced.
+          for attempt in 1 2; do
+            set +e
+            xmake build -y tmc_pc
+            rc=$?
+            set -e
+            echo "xmake build exit: $rc (attempt $attempt)"
+            if [ -f build/ios/tmc_pc ]; then
+              break
+            fi
+            echo "no binary produced, retrying..."
+            sleep 5
+          done
+          test -f build/ios/tmc_pc
+          file build/ios/tmc_pc
+
+      - name: Package unsigned .ipa
+        shell: bash
+        run: |
+          bash ios/package_ipa.sh build/ios tmc-ios.ipa
+          unzip -l tmc-ios.ipa
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: tmc-ios-unsigned
+          path: tmc-ios.ipa
+          if-no-files-found: error
